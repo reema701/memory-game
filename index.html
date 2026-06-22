@@ -243,7 +243,7 @@
     cursor:pointer;
     position:relative;
     overflow:hidden;
-    transition:transform .12s ease, border-color .2s;
+    transition:transform .12s ease, border-color .2s, box-shadow .2s;
     font-size:clamp(11px,2vw,13px);
     text-align:center;
     padding:4px;
@@ -255,6 +255,24 @@
   .upload-slot.filled{
     border-style:solid;
     border-color:var(--success);
+  }
+  .upload-slot.filled.selected{
+    border-color:var(--accent-yellow);
+    box-shadow:0 0 0 4px rgba(255,210,63,.45);
+    transform:scale(1.04);
+  }
+  .upload-slot.filled.paired{
+    border-color:var(--pair-color);
+    box-shadow:0 0 0 4px color-mix(in srgb, var(--pair-color) 45%, transparent);
+  }
+  .upload-slot-label{
+    width:100%;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
   }
   .upload-slot img{
     width:100%;
@@ -283,6 +301,39 @@
     font-size:14px;
     font-weight:900;
     box-shadow:0 2px 4px rgba(0,0,0,.3);
+  }
+  .upload-slot .pair-badge{
+    position:absolute;
+    bottom:4px;
+    right:4px;
+    background:var(--pair-color, var(--accent-purple));
+    color:var(--ink);
+    border-radius:8px;
+    min-width:22px;
+    height:22px;
+    padding:0 5px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:13px;
+    font-weight:900;
+    box-shadow:0 2px 4px rgba(0,0,0,.3);
+  }
+  .upload-slot .change-photo-btn{
+    position:absolute;
+    top:4px;
+    right:4px;
+    background:rgba(0,0,0,.55);
+    color:var(--white);
+    border-radius:50%;
+    width:24px;
+    height:24px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:12px;
+    cursor:pointer;
+    z-index:2;
   }
   .upload-slot input[type=file]{display:none;}
 
@@ -504,8 +555,11 @@
   </div>
 <br>
   <div class="upload-intro">
-    اضغط على كل خانة وارفع <b><span id="pairs-count-label">8</span> صور</b> .
-    كل صورة بتتكرر مرتين في اللعبة، ولازم تلاقي الزوجين.
+<b><span id="cards-count-label">16</span> صورة</b> اضف الصور وحدد الازواج.
+    <br>
+   
+    <br>
+   
   </div>
 
   <div class="upload-grid" id="upload-grid"></div>
@@ -514,7 +568,8 @@
     <button class="big-btn secondary" id="random-fill-btn">🎲 جرّب بصور جاهزة</button>
     <button class="big-btn" id="start-game-btn" disabled>🚀 ابدأ اللعب</button>
   </div>
-  <div class="progress-note" id="progress-note">0 من 8 صور جاهزة</div>
+  <div class="progress-note" id="progress-note">0 من 16 صور جاهزة</div>
+  <div class="progress-note" id="pairing-note">0 من 8 أزواج محدّدة</div>
 </div>
 
 <!-- ===================== شاشة 2: اللعب ===================== -->
@@ -550,19 +605,24 @@
 <script>
 (function(){
   let TOTAL_PAIRS = 8;
-  let uploadedImages = new Array(TOTAL_PAIRS).fill(null); // dataURLs
+  let TOTAL_CARDS = TOTAL_PAIRS * 2;
+  let uploadedImages = new Array(TOTAL_CARDS).fill(null); // dataURLs, واحدة لكل خانة/بطاقة
+  let pairOf = new Array(TOTAL_CARDS).fill(null); // pairOf[index] = رقم الزوج أو null
+  let pendingIndex = null; // أول صورة محددة في انتظار اختيار رفيقتها
+  let nextPairNumber = 1; // أول رقم زوج فاضي
 
   // ---------- عناصر DOM ----------
   const uploadGrid = document.getElementById('upload-grid');
   const startBtn = document.getElementById('start-game-btn');
   const randomFillBtn = document.getElementById('random-fill-btn');
   const progressNote = document.getElementById('progress-note');
+  const pairingNote = document.getElementById('pairing-note');
   const titleInput = document.getElementById('title-input');
   const gameTitle = document.getElementById('game-title');
   const DEFAULT_TITLE = '🎮 لعبة الذاكرة';
   const DEFAULT_WIN_MESSAGE = 'فزت !';
   const pairsOptions = document.getElementById('pairs-options');
-  const pairsCountLabel = document.getElementById('pairs-count-label');
+  const cardsCountLabel = document.getElementById('cards-count-label');
 
   const screenUpload = document.getElementById('screen-upload');
   const screenGame = document.getElementById('screen-game');
@@ -591,20 +651,24 @@
   pairsOptions.addEventListener('click', (e)=>{
     const btn = e.target.closest('.pairs-btn');
     if(!btn) return;
-    const newCount = parseInt(btn.dataset.pairs);
-    if(newCount === TOTAL_PAIRS) return;
+    const newPairs = parseInt(btn.dataset.pairs);
+    if(newPairs === TOTAL_PAIRS) return;
 
-    // حافظ على الصور المرفوعة سابقًا بقدر المستطاع
+    // حافظ على الصور المرفوعة سابقًا بقدر المستطاع (الربط يُعاد من الصفر لأن الأزواج تغيّرت)
     const oldImages = uploadedImages;
-    TOTAL_PAIRS = newCount;
-    uploadedImages = new Array(TOTAL_PAIRS).fill(null);
-    for(let i=0;i<Math.min(oldImages.length, TOTAL_PAIRS);i++){
+    TOTAL_PAIRS = newPairs;
+    TOTAL_CARDS = TOTAL_PAIRS * 2;
+    uploadedImages = new Array(TOTAL_CARDS).fill(null);
+    for(let i=0;i<Math.min(oldImages.length, TOTAL_CARDS);i++){
       uploadedImages[i] = oldImages[i];
     }
+    pairOf = new Array(TOTAL_CARDS).fill(null);
+    pendingIndex = null;
+    nextPairNumber = 1;
 
     pairsOptions.querySelectorAll('.pairs-btn').forEach(b=> b.classList.remove('active'));
     btn.classList.add('active');
-    pairsCountLabel.textContent = TOTAL_PAIRS;
+    cardsCountLabel.textContent = TOTAL_CARDS;
 
     buildUploadGrid();
     updateProgress();
@@ -613,28 +677,38 @@
   // ---------- بناء خانات رفع الصور ----------
   function buildUploadGrid(){
     uploadGrid.innerHTML = '';
-    for(let i=0;i<TOTAL_PAIRS;i++){
-      const slot = document.createElement('label');
+    for(let i=0;i<TOTAL_CARDS;i++){
+      const slot = document.createElement('div');
       slot.className = 'upload-slot';
       slot.dataset.index = i;
 
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.addEventListener('change', (e)=> handleFileSelect(e, i, slot));
-
-      const plus = document.createElement('div');
-      plus.innerHTML = `<div class="plus">📷</div><div>صورة ${i+1}</div>`;
-
-      slot.appendChild(plus);
-      slot.appendChild(input);
-      uploadGrid.appendChild(slot);
-
-      // لو كانت موجودة من قبل (رجوع من اللعبة)
       if(uploadedImages[i]){
-        renderSlotImage(slot, uploadedImages[i]);
+        renderSlotImage(slot, uploadedImages[i], i);
+      } else {
+        renderSlotEmpty(slot, i);
       }
+
+      uploadGrid.appendChild(slot);
     }
+    refreshPairBadges();
+  }
+
+  function renderSlotEmpty(slot, index){
+    slot.innerHTML = '';
+    slot.classList.remove('filled','selected');
+    slot.style.removeProperty('--pair-color');
+
+    const label = document.createElement('label');
+    label.className = 'upload-slot-label';
+    label.innerHTML = `<div class="plus">📷</div><div>صورة ${index+1}</div>`;
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.addEventListener('change', (e)=> handleFileSelect(e, index, slot));
+
+    label.appendChild(input);
+    slot.appendChild(label);
   }
 
   function handleFileSelect(e, index, slot){
@@ -643,38 +717,143 @@
     const reader = new FileReader();
     reader.onload = function(ev){
       uploadedImages[index] = ev.target.result;
-      renderSlotImage(slot, ev.target.result);
+      renderSlotImage(slot, ev.target.result, index);
+      refreshPairBadges();
       updateProgress();
     };
     reader.readAsDataURL(file);
   }
 
-  function renderSlotImage(slot, dataUrl){
+  function renderSlotImage(slot, dataUrl, index){
     slot.classList.add('filled');
     slot.innerHTML = '';
+
     const img = document.createElement('img');
     img.src = dataUrl;
+    slot.appendChild(img);
+
     const check = document.createElement('div');
     check.className = 'check';
     check.textContent = '✓';
+    slot.appendChild(check);
+
+    // زر صغير لتغيير الصورة لاحقًا
+    const changeLabel = document.createElement('label');
+    changeLabel.className = 'change-photo-btn';
+    changeLabel.title = 'تغيير الصورة';
+    changeLabel.textContent = '✏️';
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    const idx = parseInt(slot.dataset.index);
-    input.addEventListener('change', (e)=> handleFileSelect(e, idx, slot));
-    slot.appendChild(img);
-    slot.appendChild(check);
-    slot.appendChild(input);
+    input.addEventListener('change', (e)=>{
+      e.stopPropagation();
+      handleFileSelect(e, index, slot);
+    });
+    changeLabel.addEventListener('click', (e)=> e.stopPropagation());
+    changeLabel.appendChild(input);
+    slot.appendChild(changeLabel);
+
+    // الضغط على الصورة نفسها = اختيارها لتحديد الزوج
+    slot.addEventListener('click', (e)=>{
+      if(e.target.closest('.change-photo-btn')) return;
+      onSlotClickForPairing(index);
+    });
+  }
+
+  // ---------- تحديد الأزواج يدويًا ----------
+  function onSlotClickForPairing(index){
+    if(!uploadedImages[index]) return; // لازم تكون فيها صورة
+
+    // لو الزوج مكوّن بالفعل: اضغط على أي طرف منه لفكّه
+    if(pairOf[index] !== null){
+      const num = pairOf[index];
+      for(let i=0;i<TOTAL_CARDS;i++){
+        if(pairOf[i] === num) pairOf[i] = null;
+      }
+      refreshPairBadges();
+      updateProgress();
+      return;
+    }
+
+    if(pendingIndex === null){
+      // أول صورة في الزوج الجديد
+      pendingIndex = index;
+      refreshPairBadges();
+      return;
+    }
+
+    if(pendingIndex === index){
+      // ضغط على نفس الصورة مرتين: يلغي التحديد
+      pendingIndex = null;
+      refreshPairBadges();
+      return;
+    }
+
+    if(pairOf[pendingIndex] !== null){
+      // احتياط: الصورة المعلّقة صارت مربوطة من مكان آخر
+      pendingIndex = null;
+    }
+
+    // كوّن الزوج بين الصورة المعلّقة وهذه الصورة
+    const num = nextPairNumber;
+    pairOf[pendingIndex] = num;
+    pairOf[index] = num;
+    nextPairNumber = computeNextPairNumber();
+    pendingIndex = null;
+
+    refreshPairBadges();
+    updateProgress();
+  }
+
+  function computeNextPairNumber(){
+    const used = new Set(pairOf.filter(v=> v !== null));
+    let n = 1;
+    while(used.has(n)) n++;
+    return n;
+  }
+
+  const PAIR_COLORS = ['#FF6B9D','#2DD4BF','#FFD23F','#A855F7','#FF8C42','#34D399','#60A5FA','#F472B6','#FDBA74','#C4B5FD','#5EEAD4','#FCA5A5'];
+
+  function refreshPairBadges(){
+    const slots = uploadGrid.querySelectorAll('.upload-slot');
+    slots.forEach((slot, i)=>{
+      slot.classList.remove('selected','paired');
+      let badge = slot.querySelector('.pair-badge');
+      if(badge) badge.remove();
+      slot.style.removeProperty('--pair-color');
+
+      if(!uploadedImages[i]) return;
+
+      if(i === pendingIndex){
+        slot.classList.add('selected');
+        return;
+      }
+
+      const num = pairOf[i];
+      if(num !== null){
+        const color = PAIR_COLORS[(num-1) % PAIR_COLORS.length];
+        slot.style.setProperty('--pair-color', color);
+        slot.classList.add('paired');
+        const b = document.createElement('div');
+        b.className = 'pair-badge';
+        b.textContent = num;
+        slot.appendChild(b);
+      }
+    });
   }
 
   function updateProgress(){
-    const count = uploadedImages.filter(Boolean).length;
-    progressNote.textContent = `${count} من ${TOTAL_PAIRS} صور جاهزة`;
-    startBtn.disabled = count < TOTAL_PAIRS;
+    const uploadedCount = uploadedImages.filter(Boolean).length;
+    const pairedCount = new Set(pairOf.filter(v=> v !== null)).size;
+
+    progressNote.textContent = `${uploadedCount} من ${TOTAL_CARDS} صور جاهزة`;
+    pairingNote.textContent = `${pairedCount} من ${TOTAL_PAIRS} أزواج محدّدة`;
+
+    startBtn.disabled = uploadedCount < TOTAL_CARDS || pairedCount < TOTAL_PAIRS;
   }
 
   // صور جاهزة (إيموجي كبير على خلفية ملونة) لو الطفل يبغى يجرب بسرعة
-  const EMOJI_SET = ['🦁','🐸','🦋','🐳','🐢','🦊','🐼','🦄','🐝','🐙'];
+  const EMOJI_SET = ['🦁','🐸','🦋','🐳','🐢','🦊','🐼','🦄','🐝','🐙','🦓','🐨'];
   const EMOJI_COLORS = ['#FF6B9D','#2DD4BF','#FFD23F','#A855F7','#FF8C42','#34D399','#60A5FA','#F472B6'];
 
   function makeEmojiDataUrl(emoji, color){
@@ -687,9 +866,20 @@
   }
 
   randomFillBtn.addEventListener('click', ()=>{
+    // يعبّي كل خانة بصورة (إيموجي) ويربط الأزواج تلقائيًا (1+2, 3+4...) كبداية سريعة
+    pairOf = new Array(TOTAL_CARDS).fill(null);
+    pendingIndex = null;
+    nextPairNumber = 1;
     for(let i=0;i<TOTAL_PAIRS;i++){
-      uploadedImages[i] = makeEmojiDataUrl(EMOJI_SET[i], EMOJI_COLORS[i % EMOJI_COLORS.length]);
+      const emoji = EMOJI_SET[i % EMOJI_SET.length];
+      const color = EMOJI_COLORS[i % EMOJI_COLORS.length];
+      const url = makeEmojiDataUrl(emoji, color);
+      uploadedImages[i*2] = url;
+      uploadedImages[i*2+1] = url;
+      pairOf[i*2] = i+1;
+      pairOf[i*2+1] = i+1;
     }
+    nextPairNumber = computeNextPairNumber();
     buildUploadGrid();
     updateProgress();
   });
@@ -715,8 +905,7 @@
   function buildBoard(){
     let pairItems = [];
     uploadedImages.forEach((url, idx)=>{
-      pairItems.push({pairId: idx, url});
-      pairItems.push({pairId: idx, url});
+      pairItems.push({pairId: pairOf[idx], url});
     });
     pairItems = shuffle(pairItems);
 
@@ -738,7 +927,7 @@
       card.className = 'card';
       card.dataset.pairId = item.pairId;
       card.dataset.cardIndex = i;
-      const colors = backPalette[item.pairId % backPalette.length];
+      const colors = backPalette[Math.floor(Math.random()*backPalette.length)];
       card.style.setProperty('--cb1', colors[0]);
       card.style.setProperty('--cb2', colors[1]);
 
@@ -885,6 +1074,7 @@
   playAgainBtn.addEventListener('click', startGame);
 
   // ---------- تهيئة ----------
+  cardsCountLabel.textContent = TOTAL_CARDS;
   buildUploadGrid();
   updateProgress();
 })();
